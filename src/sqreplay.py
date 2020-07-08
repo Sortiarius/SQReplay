@@ -481,16 +481,11 @@ class Replay:
 def main():
     parser = argparse.ArgumentParser(description="Squadron TD Game Parser - Processes .SC2Replay files.")
     parser.add_argument('--debug', metavar="d", type=bool, help="Activates Debug Mode.", required=False)
-    parser.add_argument('--json', metavar="j", type=bool, help="Dumps results to human-readable JSON format.",
-                        required=False)
 
     args = parser.parse_args()
     DEBUG = False
     if args.debug:
         DEBUG = True
-
-    parsed_games = []
-    games = []
 
     with open("schema.sql", "r") as f:
         schema = f.read()
@@ -521,20 +516,9 @@ def main():
                 print(f"Invalid Replay: {data} | {file}")
             continue
 
-        if replay.game_id in parsed_games:
-            if DEBUG:
-                print(f"{replay.game_id} already parsed. Skipping.")
-            continue
-
-        parsed_games.append(replay.game_id)
-        games.append(data)
         replay.insert()
 
     db.close()
-
-    if args.json:
-        with open("out.json", "w+") as f:
-            f.write(json.dumps(games))
 
 
 if __name__ == "__main__":
