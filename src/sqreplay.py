@@ -502,7 +502,7 @@ def main():
     if args.debug:
         DEBUG = True
 
-    with open("schema.sql", "r") as f:
+    with open("./schema.sql", "r") as f:
         schema = f.read()
 
     c.executescript(schema)
