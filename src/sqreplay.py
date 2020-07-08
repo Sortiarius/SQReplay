@@ -1,9 +1,7 @@
-import mpyq, json, os, glob, re, urllib.request, sqlite3, argparse
+import mpyq, json, os, sys, glob, re, urllib.request, sqlite3, argparse, platform
 from s2protocol import versions
 from event import Event
 from tracker import TrackedUnits
-import tkinter as tk
-from tkinter import filedialog
 from pathlib import Path
 from tqdm import tqdm
 
@@ -71,7 +69,13 @@ class Replay:
     def __init__(self, path, debug):
         self.DEBUG = debug
 
-        self.archive = mpyq.MPQArchive(path)
+        self.invalid = False
+        try:
+            self.archive = mpyq.MPQArchive(path)
+        except:
+            self.invalid = True
+            return
+
         self.archive_contents = self.archive.header['user_data_header']['content']
 
         _header = versions.latest().decode_replay_header(self.archive_contents)
@@ -83,7 +87,12 @@ class Replay:
             next_lower = closest_version(self.build, versions)[0]
             self.protocol = versions.build(next_lower)
 
-        self.meta = json.loads(self.archive.read_file('replay.gamemetadata.json').decode('utf-8'))
+        try:
+            self.meta = json.loads(self.archive.read_file('replay.gamemetadata.json').decode('utf-8'))
+        except:
+            self.invalid = True
+            return
+
         self._events = None
         self._tracker_events = None
         self._init_data = None
@@ -332,6 +341,10 @@ class Replay:
             self.sends.append(send)
 
     def read(self) -> (bool, any):
+
+        if self.invalid:
+            return True, "Invalid MPQ"
+
         if self.meta['Title'] not in ['Squadron TD', 'Squadron TD Beta']:
             return True, "Unsupported Game"
 
@@ -479,8 +492,10 @@ class Replay:
 
 
 def main():
+
     parser = argparse.ArgumentParser(description="Squadron TD Game Parser - Processes .SC2Replay files.")
     parser.add_argument('--debug', metavar="d", type=bool, help="Activates Debug Mode.", required=False)
+    parser.add_argument("--path", metavar="p", type=str, help="Path to Starcraft 2 Folder", required=False)
 
     args = parser.parse_args()
     DEBUG = False
@@ -492,17 +507,33 @@ def main():
 
     c.executescript(schema)
 
-    root = tk.Tk()
-    root.withdraw()
-
-    file_path = filedialog.askdirectory(mustexist=True, title="Select Starcraft II/Replay Folder")
+    if not args.path:
+        user = os.path.expanduser("~")
+        if platform.system() == "Windows":
+            file_path = user + "\\Documents\\Starcraft II"
+        elif platform.system() == "Darwin":
+            file_path = user + "/Library/Application Support/Blizzard/Starcraft II"
+        else:
+            print("Cannot find Starcraft II folder. Run program again with --path set.")
+            return
+    else:
+        file_path = args.path
 
     total = len(list(Path(file_path).rglob('*.SC2Replay')))
 
     for file in tqdm(Path(file_path).rglob('*.SC2Replay'), total=total):
         replay = Replay(file, DEBUG)
 
-        replay_id = replay.game_id
+        if replay.invalid:
+            if DEBUG:
+                print(f"Invalid MPQ: {file}".encode('utf-8'))
+            continue
+
+        try:
+            replay_id = replay.game_id
+        except:
+            if DEBUG:
+                print(f"Invalid MPQ Events: {file}".encode('utf-8'))
 
         for row in c.execute("SELECT * FROM Games WHERE ID = ?", (replay_id,)):
             if row[0] == replay_id:
@@ -513,7 +544,7 @@ def main():
         _err, data = replay.read()
         if _err:
             if DEBUG:
-                print(f"Invalid Replay: {data} | {file}")
+                print(f"Invalid Replay: {file}".encode('utf-8'))
             continue
 
         replay.insert()
