@@ -506,6 +506,15 @@ def main():
 
     for file in tqdm(Path(file_path).rglob('*.SC2Replay'), total=total):
         replay = Replay(file, DEBUG)
+
+        replay_id = replay.game_id
+
+        for row in c.execute("SELECT * FROM Games WHERE ID = ?", (replay_id,)):
+            if row[0] == replay_id:
+                if DEBUG:
+                    print(f"Replay already in Database: {file}")
+                continue
+
         _err, data = replay.read()
         if _err:
             if DEBUG:
