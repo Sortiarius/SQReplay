@@ -488,7 +488,7 @@ class Replay:
             "upgrades": self.speedUps
         }
 
-        dump_to_debug(self.towers)
+        #dump_to_debug(self.towers)
 
         self._db = game
 
