@@ -5,8 +5,30 @@ from tracker import TrackedUnits
 from pathlib import Path
 from tqdm import tqdm
 
-req = urllib.request.urlopen("https://gist.github.com/Sortiarius/31b6399ec0c9c5a5be46f9c80b9d19a5/raw").read().decode()
-PATCHES = json.loads(req)
+#req = urllib.request.urlopen("https://gist.github.com/Sortiarius/31b6399ec0c9c5a5be46f9c80b9d19a5/raw").read().decode()
+#PATCHES = json.loads(req)
+
+PATCHES = [{
+    "patch": "8.00",
+    "time": 1561322220
+    },
+    {
+        "patch": "8.04",
+        "time": 1575838380
+    },
+    {
+        "patch": "8.05",
+        "time": 1579666860
+    },
+    {
+        "patch": "8.11",
+        "time": 1584938880
+    },
+    {
+        "patch": "8.14",
+        "time": 1587249780
+    }
+]
 
 ATTRIBUTES_GAMEMODE = {
     "0001": "Select",
@@ -22,8 +44,17 @@ ATTRIBUTES_CREEPMULT = {
     "0003": "3x"
 }
 
+UNTRACKED_TOWERS = [
+    'fSwarmLocust'
+]
+
 db = sqlite3.connect("./squadron.db")
 c = db.cursor()
+
+
+def dump_to_debug(debug: object):
+    with open("debug.json", "w+") as f:
+        f.write(json.dumps(debug, indent=4, sort_keys=True))
 
 
 def patch(timestamp) -> str:
@@ -64,6 +95,17 @@ def team(tid) -> str:
         return "West"
 
 
+def tower_in_list(list: list, tower: object):
+    for t in list:
+        if t['builder'] == tower['builder'] and \
+                t['type'] == tower['type'] and \
+                t['wave'] == tower['wave'] and \
+                (tower['posx'] == t['posx'] or tower['posx'] - 1 == t['posx'] or tower['posx'] + 1 == t['posx']) and \
+                (tower['posy'] == t['posy'] or tower['posy'] - 1 == t['posy'] or tower['posy'] + 1 == t['posy']):
+            return True
+    return False
+
+
 class Replay:
 
     def __init__(self, path, debug):
@@ -102,16 +144,19 @@ class Replay:
         self.tracked_units = TrackedUnits()
         self.game_ended = False
         self.winner = None
+        self._phase = "Build"
 
         self.players = []
 
         self._game = {"wave": 0, "builders": {}}
         self.towers = []
+        self.towerList = {}
         self.sends = []
         self.buildersByWave = []
         self.buildersOnWave = {}
         self.workers = []
         self.speedUps = []
+        self.kills = []
 
         self.gasNumber = {}
         self.upgradeNumber = {}
@@ -252,6 +297,13 @@ class Replay:
                 return player
 
     def handle_upgrade(self, event):
+
+        if event['m_upgradeTypeName'] == "BuildPhase":
+            self._phase = "Build"
+
+        if event['m_upgradeTypeName'] == "FightPhase":
+            self._phase = "Fight"
+
         if event['m_upgradeTypeName'] == "RefinerySpeed":
             player = self.player(event['m_playerId'])
             handle = player['handle']
@@ -269,6 +321,17 @@ class Replay:
     def handle_death(self, event: Event, init_event: Event):
         owner = self.player(init_event['m_controlPlayerId'])
         killer = self.player(event.get('m_killerPlayerId'))
+        type = init_event.get("m_unitTypeName")
+
+        if self._phase == "Fight":
+            self.kills.append(
+                {
+                    "owner": owner,
+                    "killer": killer,
+                    "event": event,
+                    "type": init_event.get("m_unitTypeName")
+                }
+            )
 
         if init_event.is_unit("SecuritySystem"):
             if event.position == 77:
@@ -323,13 +386,27 @@ class Replay:
             return
 
         # Tower
-        if unit_type[0] == "f":
+        if unit_type[0] == "f" and unit_type not in UNTRACKED_TOWERS:
             tower = {
                 "builder": event["m_controlPlayerId"],
                 "type": unit_type,
-                "wave": self._game['wave']
+                "wave": self._game['wave'],
+                "posx": event["m_x"],
+                "posy": event["m_y"]
             }
-            self.towers.append(tower)
+
+            towerRecord = {
+                "type": unit_type,
+            }
+
+            self.towerList[event["m_controlPlayerId"]][self._game['wave']].append(towerRecord)
+
+            if towerRecord not in self.towerList[event["m_controlPlayerId"]][self._game['wave'] - 1]:
+                # if event["m_controlPlayerId"] == 1:
+                # print("Not Found")
+                # if tower not in self.towers:
+                if not tower_in_list(self.towers, tower):
+                    self.towers.append(tower)
 
         # Send
         if unit_type[0:5] == "Send_":
@@ -358,6 +435,9 @@ class Replay:
 
         if len(self.players) < 4:
             return True, "Not Enough Players"
+
+        for player in self.players:
+            self.towerList[player['player_id']] = [[] for i in range(0, 50)]
 
         gamemode = self.attribute_events['scopes'][16][6][0]['value'].decode()
         if gamemode not in ATTRIBUTES_GAMEMODE:
@@ -407,6 +487,8 @@ class Replay:
             "workers": self.workers,
             "upgrades": self.speedUps
         }
+
+        dump_to_debug(self.towers)
 
         self._db = game
 
@@ -492,7 +574,6 @@ class Replay:
 
 
 def main():
-
     parser = argparse.ArgumentParser(description="Squadron TD Game Parser - Processes .SC2Replay files.")
     parser.add_argument('--debug', metavar="d", type=bool, help="Activates Debug Mode.", required=False)
     parser.add_argument("--path", metavar="p", type=str, help="Path to Starcraft 2 Folder", required=False)
